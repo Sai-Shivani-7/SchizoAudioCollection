@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CircleStop, Eye, Mic, RotateCcw, Save, Sparkles } from 'lucide-react';
 import { api } from '../api/client';
@@ -49,9 +49,85 @@ export default function UserDashboard({ currentUser }) {
   const [loadingAction, setLoadingAction] = useState('');
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  const [initialLoading, setInitialLoading] = useState(true);
 
   const currentQuestion = voiceQuestions[stepIndex];
   const hasAllResponses = Object.keys(savedResponses).length === voiceQuestions.length;
+
+  // Load existing submission data from the backend on mount so saved
+  // responses are retained across page refreshes / component remounts.
+  useEffect(() => {
+    async function loadExistingSubmission() {
+      try {
+        // Try loading from the stored submissionId first
+        const storedId = localStorage.getItem('sdc-submission-id');
+        if (storedId) {
+          try {
+            const response = await api.get(`/get-report/${storedId}`);
+            const data = response.data;
+            if (data.responses && typeof data.responses === 'object') {
+              setSavedResponses(data.responses);
+            }
+            setSubmissionId(storedId);
+            return;
+          } catch {
+            // Report may not exist yet — fall through to try my-submissions
+          }
+        }
+
+        // Fall back to loading from my-submissions
+        const response = await api.get('/my-submissions');
+        const submissions = response.data;
+        if (submissions && submissions.length > 0) {
+          // Find the submission matching our current sessionId, or use the latest
+          const matching = submissions.find((s) => s.sessionId === sessionId) || submissions[0];
+          if (matching) {
+            const responses = matching.responses || {};
+            // Mongoose Maps are serialized as objects — handle both formats
+            const normalizedResponses = {};
+            for (const [key, value] of Object.entries(responses)) {
+              if (value && (value.audioUrl || value.questionId)) {
+                normalizedResponses[key] = value;
+              }
+            }
+            if (Object.keys(normalizedResponses).length > 0) {
+              setSavedResponses(normalizedResponses);
+            }
+            if (matching._id) {
+              setSubmissionId(matching._id);
+              localStorage.setItem('sdc-submission-id', matching._id);
+            }
+          }
+        }
+      } catch (loadError) {
+        console.warn('Could not load existing submission:', loadError.message);
+        // Non-critical — user can still record new responses
+      } finally {
+        setInitialLoading(false);
+      }
+    }
+
+    loadExistingSubmission();
+  }, [sessionId]);
+
+  // Reset per-question recording state when switching steps
+  useEffect(() => {
+    // Stop any ongoing recording when switching questions
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      speechRecognizerRef.current?.stop();
+      setIsRecording(false);
+    }
+
+    // Reset recording-related state for the new question
+    setAudioBlob(null);
+    setRecordingStopped(false);
+    setTranscript('');
+    setDurationMs(0);
+    setError('');
+    setStatus('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepIndex]);
 
   async function startRecording() {
     setError('');
@@ -131,8 +207,15 @@ export default function UserDashboard({ currentUser }) {
       setSavedResponses((current) => ({ ...current, [currentQuestion.id]: response.data.response }));
       setAudioBlob(null);
       setTranscript('');
+      setRecordingStopped(false);
+      setDurationMs(0);
       setStatus('Audio, transcripts, and question result saved.');
-      setStepIndex((current) => Math.min(current + 1, voiceQuestions.length - 1));
+
+      // Move to next unanswered question, or stay on last
+      const nextIndex = Math.min(stepIndex + 1, voiceQuestions.length - 1);
+      if (nextIndex !== stepIndex) {
+        setStepIndex(nextIndex);
+      }
     } catch (requestError) {
       setError(requestError.response?.data?.message || 'Unable to save this voice response.');
     } finally {
@@ -158,6 +241,17 @@ export default function UserDashboard({ currentUser }) {
     } finally {
       setLoadingAction('');
     }
+  }
+
+  // Check if the current question already has a saved response
+  const currentQuestionSaved = savedResponses[currentQuestion?.id];
+
+  if (initialLoading) {
+    return (
+      <main className="page">
+        <p className="inline-status">Loading your session...</p>
+      </main>
+    );
   }
 
   return (
@@ -194,7 +288,7 @@ export default function UserDashboard({ currentUser }) {
             onClick={() => setStepIndex(index)}
           >
             {index + 1}
-            <span>{savedResponses[question.id] ? 'Saved' : 'Pending'}</span>
+            <span>{savedResponses[question.id] ? '✓ Saved' : 'Pending'}</span>
           </button>
         ))}
       </div>
@@ -205,11 +299,28 @@ export default function UserDashboard({ currentUser }) {
           <p>{currentQuestion.text}</p>
         </div>
 
+        {/* Show previously saved response info if available */}
+        {currentQuestionSaved && !audioBlob && !isRecording && (
+          <div className="saved-response-info">
+            <p className="success">✓ This question has been saved.</p>
+            {currentQuestionSaved.audioUrl && (
+              <audio controls src={currentQuestionSaved.audioUrl} />
+            )}
+            {currentQuestionSaved.transcripts?.raw && (
+              <div className="transcript-panel">
+                <span>Saved transcript</span>
+                <p>{currentQuestionSaved.transcripts.raw}</p>
+              </div>
+            )}
+            <p className="inline-status">You can re-record to replace this response.</p>
+          </div>
+        )}
+
         <div className="recorder-controls">
           {!isRecording ? (
             <button className={recordingStopped ? 'secondary disabled-look' : 'primary'} type="button" onClick={startRecording} disabled={recordingStopped}>
               <Mic size={18} />
-              Start Recording
+              {currentQuestionSaved && !recordingStopped ? 'Re-record' : 'Start Recording'}
             </button>
           ) : (
             <button type="button" onClick={stopRecording}>
@@ -241,7 +352,7 @@ export default function UserDashboard({ currentUser }) {
         <button className="secondary" type="button" onClick={() => setStepIndex((current) => Math.max(current - 1, 0))}>
           Back
         </button>
-        <button type="button" onClick={saveAndNext} disabled={loadingAction !== ''}>
+        <button type="button" onClick={saveAndNext} disabled={loadingAction !== '' || (!audioBlob && !currentQuestionSaved)}>
           <Save size={18} />
           {loadingAction === 'save' ? 'Saving...' : 'Save and Next'}
         </button>

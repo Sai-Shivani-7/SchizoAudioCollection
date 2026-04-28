@@ -308,6 +308,26 @@ button,
   gap: 20px;
 }
 
+.saved-response-info {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.saved-response-info .success {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.saved-response-info .inline-status {
+  margin: 0;
+  font-size: 13px;
+}
+
 .recorder-controls {
   align-items: center;
   display: flex;

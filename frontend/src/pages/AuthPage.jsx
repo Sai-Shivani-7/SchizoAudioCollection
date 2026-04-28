@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { LogIn, UserPlus } from 'lucide-react';
 import { api } from '../api/client';
 
@@ -12,11 +12,18 @@ export default function AuthPage({ onAuth }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  function storeAuth(payload) {
-    localStorage.setItem('sdc-auth-token', payload.token);
-    localStorage.setItem('sdc-auth-user', JSON.stringify(payload.user));
-    onAuth(payload.user);
-  }
+  // Keep a ref so the Google callback always reads the latest role value
+  const roleRef = useRef(role);
+  roleRef.current = role;
+
+  const storeAuth = useCallback(
+    (payload) => {
+      localStorage.setItem('sdc-auth-token', payload.token);
+      localStorage.setItem('sdc-auth-user', JSON.stringify(payload.user));
+      onAuth(payload.user);
+    },
+    [onAuth],
+  );
 
   async function submit(event) {
     event.preventDefault();
@@ -33,40 +40,78 @@ export default function AuthPage({ onAuth }) {
     }
   }
 
+  // Track whether the GSI library has been loaded & initialized
+  const gsiInitializedRef = useRef(false);
+
   useEffect(() => {
-    if (!googleClientId || !googleButtonRef.current) return;
+    if (!googleClientId) return;
 
-    const script = document.createElement('script');
-    script.src = 'https://accounts.google.com/gsi/client';
-    script.async = true;
-    script.defer = true;
-    script.onload = () => {
-      window.google?.accounts.id.initialize({
-        client_id: googleClientId,
-        callback: async (credentialResponse) => {
-          try {
-            const response = await api.post('/auth/google', {
-              credential: credentialResponse.credential,
-              role,
-            });
-            storeAuth(response.data);
-          } catch (requestError) {
-            setError(requestError.response?.data?.message || 'Google sign-in failed.');
-          }
-        },
-      });
-      window.google?.accounts.id.renderButton(googleButtonRef.current, {
-        theme: 'outline',
-        size: 'large',
-        width: 280,
-      });
-    };
-    document.body.appendChild(script);
+    // If the library is already loaded, just re-render the button
+    if (gsiInitializedRef.current && window.google?.accounts?.id) {
+      renderGoogleButton();
+      return;
+    }
 
-    return () => {
-      script.remove();
-    };
-  }, [role]);
+    // Check if the GSI script is already present
+    const existingScript = document.querySelector(
+      'script[src="https://accounts.google.com/gsi/client"]',
+    );
+
+    if (existingScript && window.google?.accounts?.id) {
+      initializeGsi();
+      return;
+    }
+
+    if (!existingScript) {
+      const script = document.createElement('script');
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.defer = true;
+      script.onload = () => initializeGsi();
+      document.head.appendChild(script);
+    }
+    // No cleanup — we intentionally keep the GSI script in the page for the
+    // lifetime of the app. Removing it causes issues with re-initialization.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function initializeGsi() {
+    if (!window.google?.accounts?.id) return;
+
+    window.google.accounts.id.initialize({
+      client_id: googleClientId,
+      callback: handleGoogleCredential,
+    });
+
+    gsiInitializedRef.current = true;
+    renderGoogleButton();
+  }
+
+  function renderGoogleButton() {
+    if (!googleButtonRef.current || !window.google?.accounts?.id) return;
+
+    // Clear previous rendered button to avoid duplicates
+    googleButtonRef.current.innerHTML = '';
+
+    window.google.accounts.id.renderButton(googleButtonRef.current, {
+      theme: 'outline',
+      size: 'large',
+      width: 280,
+    });
+  }
+
+  async function handleGoogleCredential(credentialResponse) {
+    setError('');
+    try {
+      const response = await api.post('/auth/google', {
+        credential: credentialResponse.credential,
+        role: roleRef.current,
+      });
+      storeAuth(response.data);
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Google sign-in failed.');
+    }
+  }
 
   return (
     <main className="auth-page">
