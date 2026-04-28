@@ -168,15 +168,28 @@ async function generateReport(req, res, next) {
     const submission = await Submission.findOne(query);
     if (!submission) return res.status(404).json({ message: 'Submission not found.' });
 
+    // Check that there are responses to generate a report from
+    const responseCount = submission.responses ? submission.responses.size : 0;
+    if (responseCount === 0) {
+      return res.status(400).json({ message: 'No voice responses found for this submission.' });
+    }
+
     submission.report = buildReport(submission);
-    const reportAsset = await uploadTextAsset({
-      text: JSON.stringify(submission.report, null, 2),
-      fileName: 'final-report.json',
-      folder: getParticipantFolder(submission.user, submission.userId),
-      mimeType: 'application/json',
-    });
-    submission.reportUrl = reportAsset.url;
     submission.status = 'report-generated';
+
+    // Try uploading to Cloudinary but don't fail if it doesn't work
+    try {
+      const reportAsset = await uploadTextAsset({
+        text: JSON.stringify(submission.report, null, 2),
+        fileName: 'final-report.json',
+        folder: getParticipantFolder(submission.user, submission.userId),
+        mimeType: 'application/json',
+      });
+      submission.reportUrl = reportAsset.url;
+    } catch (uploadError) {
+      console.warn('Cloudinary upload for report failed (report still saved to DB):', uploadError.message);
+    }
+
     await submission.save();
 
     res.json({ message: 'Report generated.', report: submission.report, submission });
@@ -192,10 +205,16 @@ async function getReport(req, res, next) {
     const submission = await Submission.findOne(query);
     if (!submission) return res.status(404).json({ message: 'Submission not found.' });
     if (!submission.report) return res.status(404).json({ message: 'Report has not been generated yet.' });
+
+    // Convert Mongoose Map to a plain object for JSON serialization
+    const responses = submission.responses instanceof Map
+      ? Object.fromEntries(submission.responses)
+      : (submission.responses || {});
+
     res.json({
       submissionId: submission._id,
       user: submission.user,
-      responses: Object.fromEntries(submission.responses || []),
+      responses,
       combinedTranscript: submission.combinedTranscript,
       combinedTranscriptUrl: submission.combinedTranscriptUrl,
       combinedResult: submission.combinedResult,
@@ -210,8 +229,16 @@ async function getReport(req, res, next) {
 
 async function getAdminUsers(req, res, next) {
   try {
-    const submissions = await Submission.find().sort({ updatedAt: -1 });
-    res.json(submissions);
+    const submissions = await Submission.find().sort({ updatedAt: -1 }).lean();
+    // .lean() returns plain JS objects, converting Mongoose Maps to regular objects
+    // Ensure responses are always plain objects
+    const serialized = submissions.map((sub) => ({
+      ...sub,
+      responses: sub.responses && typeof sub.responses === 'object'
+        ? (sub.responses instanceof Map ? Object.fromEntries(sub.responses) : sub.responses)
+        : {},
+    }));
+    res.json(serialized);
   } catch (error) {
     next(error);
   }
@@ -219,8 +246,14 @@ async function getAdminUsers(req, res, next) {
 
 async function getMySubmissions(req, res, next) {
   try {
-    const submissions = await Submission.find({ userId: req.user._id.toString() }).sort({ updatedAt: -1 });
-    res.json(submissions);
+    const submissions = await Submission.find({ userId: req.user._id.toString() }).sort({ updatedAt: -1 }).lean();
+    const serialized = submissions.map((sub) => ({
+      ...sub,
+      responses: sub.responses && typeof sub.responses === 'object'
+        ? (sub.responses instanceof Map ? Object.fromEntries(sub.responses) : sub.responses)
+        : {},
+    }));
+    res.json(serialized);
   } catch (error) {
     next(error);
   }

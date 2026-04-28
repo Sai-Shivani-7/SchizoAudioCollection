@@ -9,6 +9,7 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [generatingId, setGeneratingId] = useState('');
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
   async function loadSubmissions() {
     setLoading(true);
@@ -26,11 +27,15 @@ export default function AdminDashboard() {
   async function generateReport(submissionId) {
     setGeneratingId(submissionId);
     setError('');
+    setSuccess('');
     try {
-      await api.post('/generate-report', { submissionId });
+      const response = await api.post('/generate-report', { submissionId });
+      setSuccess(`Report generated for submission ${submissionId.slice(-6)}.`);
       await loadSubmissions();
     } catch (requestError) {
-      setError(requestError.response?.data?.message || 'Unable to generate report.');
+      const msg = requestError.response?.data?.message || 'Unable to generate report.';
+      setError(msg);
+      console.error('Generate report error:', requestError.response?.data || requestError.message);
     } finally {
       setGeneratingId('');
     }
@@ -39,6 +44,16 @@ export default function AdminDashboard() {
   useEffect(() => {
     loadSubmissions();
   }, []);
+
+  function getReportSummary(report) {
+    if (!report) return 'Not generated';
+    const classification = report.classification || 'Unknown';
+    const probability = report.probabilitySchizophrenia;
+    if (probability !== undefined && probability !== null) {
+      return `${classification} (${(probability * 100).toFixed(1)}%)`;
+    }
+    return classification;
+  }
 
   return (
     <main className="page">
@@ -55,6 +70,7 @@ export default function AdminDashboard() {
       </header>
 
       {error && <p className="error">{error}</p>}
+      {success && <p className="success">{success}</p>}
       {loading ? (
         <p className="inline-status">Loading submissions...</p>
       ) : (
@@ -71,7 +87,8 @@ export default function AdminDashboard() {
             </thead>
             <tbody>
               {submissions.map((submission) => {
-                const responseCount = Object.keys(submission.responses || {}).length;
+                const responses = submission.responses || {};
+                const responseCount = Object.keys(responses).length;
                 return (
                   <tr key={submission._id}>
                     <td>
@@ -80,16 +97,22 @@ export default function AdminDashboard() {
                     </td>
                     <td>{responseCount} / 3 audios, {responseCount * 2} transcripts, {responseCount} results</td>
                     <td>{submission.status}</td>
-                    <td>{submission.report ? `${submission.report.riskLevel} (${submission.report.confidenceScore}%)` : 'Pending'}</td>
+                    <td>{getReportSummary(submission.report)}</td>
                     <td>
                       <div className="table-actions">
-                        <button className="secondary" type="button" onClick={() => navigate(`/report/${submission._id}`)}>
-                          <Eye size={16} />
-                          View Report
-                        </button>
-                        <button type="button" onClick={() => generateReport(submission._id)} disabled={generatingId === submission._id}>
+                        {submission.report && (
+                          <button className="secondary" type="button" onClick={() => navigate(`/report/${submission._id}`)}>
+                            <Eye size={16} />
+                            View Report
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => generateReport(submission._id)}
+                          disabled={generatingId === submission._id || responseCount === 0}
+                        >
                           <Sparkles size={16} />
-                          {generatingId === submission._id ? 'Generating...' : 'Generate'}
+                          {generatingId === submission._id ? 'Generating...' : submission.report ? 'Regenerate' : 'Generate'}
                         </button>
                       </div>
                     </td>

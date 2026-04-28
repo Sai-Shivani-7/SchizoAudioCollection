@@ -18,8 +18,21 @@ async function signup(req, res, next) {
   try {
     const { name, email, password, role = 'user' } = req.body;
     if (!name || !email || !password) return res.status(400).json({ message: 'Name, email, and password are required.' });
+
     const existing = await User.findOne({ email });
-    if (existing) return res.status(409).json({ message: 'An account already exists for this email.' });
+
+    if (existing) {
+      // If account was created via Google, allow linking by adding a password
+      if (existing.provider === 'google' && !existing.passwordHash) {
+        existing.passwordHash = hashPassword(password);
+        existing.name = name || existing.name;
+        // If user signed up via Google as 'user' but now wants 'admin', update role
+        if (role === 'admin') existing.role = 'admin';
+        await existing.save();
+        return res.json(authPayload(existing));
+      }
+      return res.status(409).json({ message: 'An account already exists for this email.' });
+    }
 
     const user = await User.create({
       name,
@@ -39,7 +52,14 @@ async function login(req, res, next) {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ email });
-    if (!user || !user.passwordHash || !verifyPassword(password, user.passwordHash)) {
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid email or password.' });
+    }
+    // If user only has Google account, tell them
+    if (user.provider === 'google' && !user.passwordHash) {
+      return res.status(401).json({ message: 'This account uses Google sign-in. Please log in with Google or sign up to set a password.' });
+    }
+    if (!user.passwordHash || !verifyPassword(password, user.passwordHash)) {
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
     res.json(authPayload(user));
@@ -50,21 +70,12 @@ async function login(req, res, next) {
 
 /**
  * Decode a Google ID token (JWT) without external libraries.
- * Google ID tokens are JWTs with three base64url-encoded parts.
- * We decode the payload to extract user profile fields and verify
- * the audience (aud) matches our client ID.
- *
- * Note: For production, you should verify the signature using Google's
- * public keys. This implementation validates the audience and expiry
- * which is sufficient when combined with HTTPS transport security.
  */
 function decodeGoogleIdToken(idToken) {
   const parts = idToken.split('.');
   if (parts.length !== 3) {
     throw new Error('Invalid ID token format.');
   }
-
-  // Decode the payload (second part)
   const payloadBase64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
   const payloadJson = Buffer.from(payloadBase64, 'base64').toString('utf8');
   return JSON.parse(payloadJson);

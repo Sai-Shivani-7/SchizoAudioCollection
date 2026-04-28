@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { NavLink, Route, Routes } from 'react-router-dom';
+import { NavLink, Route, Routes, Navigate } from 'react-router-dom';
 import { LogOut, ShieldCheck, UserRound } from 'lucide-react';
 import AdminDashboard from './pages/AdminDashboard';
 import AuthPage from './pages/AuthPage';
@@ -22,6 +22,8 @@ export default function App() {
 
   if (!currentUser) return <AuthPage onAuth={setCurrentUser} />;
 
+  const isAdmin = currentUser.role === 'admin';
+
   return (
     <div className="app-shell">
       <nav className="top-nav">
@@ -30,14 +32,15 @@ export default function App() {
           <strong>Schizophrenia Data Collection System</strong>
         </div>
         <div className="nav-links">
-          <NavLink to="/">
-            <UserRound size={18} />
-            User
-          </NavLink>
-          {currentUser.role === 'admin' && (
+          {isAdmin ? (
             <NavLink to="/admin">
               <ShieldCheck size={18} />
-              Admin
+              Admin Dashboard
+            </NavLink>
+          ) : (
+            <NavLink to="/">
+              <UserRound size={18} />
+              Dashboard
             </NavLink>
           )}
           <button className="secondary nav-user" type="button" onClick={logout}>
@@ -48,9 +51,19 @@ export default function App() {
       </nav>
 
       <Routes>
-        <Route path="/" element={<UserDashboard currentUser={currentUser} />} />
-        <Route path="/admin" element={<AdminDashboard />} />
-        <Route path="/report/:id" element={<ReportView />} />
+        {isAdmin ? (
+          <>
+            <Route path="/admin" element={<AdminDashboard />} />
+            <Route path="/report/:id" element={<ReportView />} />
+            <Route path="*" element={<Navigate to="/admin" replace />} />
+          </>
+        ) : (
+          <>
+            <Route path="/" element={<UserDashboard currentUser={currentUser} />} />
+            <Route path="/report/:id" element={<ReportView />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </>
+        )}
       </Routes>
     </div>
   );
