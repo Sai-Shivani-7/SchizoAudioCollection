@@ -132,7 +132,7 @@ async function googleLogin(req, res, next) {
           picture: profile.picture,
         },
       },
-      { new: true, upsert: true, setDefaultsOnInsert: true, returnDocument: 'after' }
+      { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true }
     );
 
     res.json(authPayload(user));

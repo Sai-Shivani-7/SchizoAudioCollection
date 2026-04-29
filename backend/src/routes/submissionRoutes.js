@@ -6,6 +6,10 @@ const {
   saveVoiceResponse,
   submitData,
   uploadZip,
+  googleDriveAuth,
+  googleDriveOAuthCallback,
+  googleDriveDeviceAuth,
+  googleDriveDeviceToken,
   generateReport,
   getReport,
   getAdminUsers,
@@ -19,6 +23,10 @@ router.post('/submit-data', requireAuth, submitData);
 router.post('/generate-report', requireAuth, generateReport);
 router.post('/upload-voice-response', requireAuth, uploadMemory.single('audio'), saveVoiceResponse);
 router.post('/upload-zip', requireAuth, uploadMemory.single('zipFile'), uploadZip);
+router.get('/google-drive/auth', googleDriveAuth);
+router.get('/google-drive/oauth2callback', googleDriveOAuthCallback);
+router.get('/google-drive/device-auth', googleDriveDeviceAuth);
+router.post('/google-drive/device-token', googleDriveDeviceToken);
 router.get('/get-report/:id', requireAuth, getReport);
 router.get('/my-submissions', requireAuth, getMySubmissions);
 router.get('/admin/users', requireAuth, requireAdmin, getAdminUsers);

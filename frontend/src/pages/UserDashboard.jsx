@@ -29,6 +29,63 @@ function createSpeechRecognizer(onText) {
   return recognizer;
 }
 
+function writeString(view, offset, text) {
+  for (let index = 0; index < text.length; index += 1) {
+    view.setUint8(offset + index, text.charCodeAt(index));
+  }
+}
+
+function audioBufferToWav(audioBuffer) {
+  const channelCount = audioBuffer.numberOfChannels;
+  const sampleRate = audioBuffer.sampleRate;
+  const sampleCount = audioBuffer.length;
+  const bytesPerSample = 2;
+  const blockAlign = channelCount * bytesPerSample;
+  const dataSize = sampleCount * blockAlign;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channelCount, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  const channels = Array.from({ length: channelCount }, (_, index) => audioBuffer.getChannelData(index));
+  for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex += 1) {
+    for (let channelIndex = 0; channelIndex < channelCount; channelIndex += 1) {
+      const sample = Math.max(-1, Math.min(1, channels[channelIndex][sampleIndex]));
+      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+      offset += bytesPerSample;
+    }
+  }
+
+  return buffer;
+}
+
+async function convertRecordingToWav(recordedBlob) {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) throw new Error('This browser cannot convert recordings to WAV.');
+
+  const audioContext = new AudioContext();
+  try {
+    const sourceBuffer = await recordedBlob.arrayBuffer();
+    const decodedAudio = await audioContext.decodeAudioData(sourceBuffer.slice(0));
+    return new Blob([audioBufferToWav(decodedAudio)], { type: 'audio/wav' });
+  } finally {
+    await audioContext.close?.();
+  }
+}
+
 export default function UserDashboard({ currentUser }) {
   const navigate = useNavigate();
   const sessionId = useMemo(() => makeSessionId(currentUser?.id), [currentUser?.id]);
@@ -143,10 +200,20 @@ export default function UserDashboard({ currentUser }) {
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) chunksRef.current.push(event.data);
       };
-      recorder.onstop = () => {
-        setAudioBlob(new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' }));
+      recorder.onstop = async () => {
+        const recordedBlob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
         setDurationMs(recordingStartedAtRef.current ? Date.now() - recordingStartedAtRef.current : 0);
         stream.getTracks().forEach((track) => track.stop());
+        try {
+          setStatus('Preparing WAV audio...');
+          const wavBlob = await convertRecordingToWav(recordedBlob);
+          setAudioBlob(wavBlob);
+          setStatus('Recording converted to WAV. Ready to save.');
+        } catch (conversionError) {
+          setAudioBlob(null);
+          setError(conversionError.message || 'Unable to convert this recording to WAV. Please re-record.');
+          setStatus('');
+        }
       };
       recorder.start();
       recordingStartedAtRef.current = Date.now();
@@ -196,7 +263,7 @@ export default function UserDashboard({ currentUser }) {
       payload.append('question', currentQuestion.text);
       payload.append('rawTranscript', transcript);
       payload.append('durationMs', String(durationMs));
-      payload.append('audio', audioBlob, `${currentQuestion.id}-${Date.now()}.webm`);
+      payload.append('audio', audioBlob, `${currentQuestion.id}-${Date.now()}.wav`);
 
       const response = await api.post('/upload-voice-response', payload);
       const savedId = response.data.submission?._id;
@@ -209,7 +276,16 @@ export default function UserDashboard({ currentUser }) {
       setTranscript('');
       setRecordingStopped(false);
       setDurationMs(0);
-      setStatus('Audio, transcripts, and question result saved.');
+      const zipEntryText = response.data.zipEntries?.length
+        ? ` ZIP contains: ${response.data.zipEntries.join(', ')}.`
+        : '';
+      if (response.data.submission?.zipGoogleDriveUrl) {
+        setStatus(`Audio, transcripts, result, and Drive ZIP saved.${zipEntryText}`);
+      } else if (response.data.submission?.zipUploadError) {
+        setStatus(`Audio saved, but Drive ZIP upload failed: ${response.data.submission.zipUploadError}${zipEntryText}`);
+      } else {
+        setStatus(`Audio, transcripts, and question result saved.${zipEntryText}`);
+      }
 
       // Move to next unanswered question, or stay on last
       const nextIndex = Math.min(stepIndex + 1, voiceQuestions.length - 1);

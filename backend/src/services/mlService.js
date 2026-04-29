@@ -226,6 +226,13 @@ function orderedResponses(submission) {
   return ['q1', 'q2', 'q3'].map((id) => responses[id]).filter(Boolean);
 }
 
+function orderedResponseEntries(submission) {
+  const responses = Object.fromEntries(submission.responses || []);
+  return ['q1', 'q2', 'q3']
+    .filter((id) => responses[id])
+    .map((id) => [id, responses[id]]);
+}
+
 function buildCombinedTranscript(submission) {
   return orderedResponses(submission)
     .map((response, index) => `Question ${index + 1}: ${response.question}\nTranscript: ${response.transcripts?.normalized || response.transcripts?.raw || ''}`)
@@ -239,7 +246,90 @@ function buildCombinedResult(submission) {
   };
 }
 
+function transcriptForResponse(response) {
+  return response?.transcripts?.normalized || response?.transcripts?.raw || '';
+}
+
+function buildCumulativeTranscript(entries, uptoIndex) {
+  return entries
+    .slice(0, uptoIndex + 1)
+    .map(([questionId, response]) => {
+      const label = questionId.replace(/^q/, 'Question ');
+      return `${label}: ${response.question}\nTranscript: ${transcriptForResponse(response)}`;
+    })
+    .join('\n\n');
+}
+
+function summarizePatterns(result, wordCount) {
+  const biomarkers = result?.biomarkers || {};
+  const notes = [];
+
+  if (biomarkers.semantic_coherence?.flag === 'LOW') notes.push('reduced semantic coherence');
+  else notes.push('coherence appears broadly preserved');
+
+  if (biomarkers.repetition_rate?.flag === 'HIGH') notes.push('elevated immediate repetition');
+  if (biomarkers.sentence_fragmentation?.flag === 'HIGH') notes.push('increased sentence fragmentation');
+  if (biomarkers.disfluency_ratio?.flag === 'HIGH') notes.push('notable disfluency markers');
+  if (biomarkers.type_token_ratio?.flag === 'LOW') notes.push('reduced lexical variety');
+  if (biomarkers.coherence_len_std?.flag === 'HIGH' || biomarkers.coherence_len_drift?.flag === 'HIGH') {
+    notes.push('variable sentence-length coherence');
+  }
+
+  const dataNote = wordCount < 25
+    ? 'Interpret cautiously because the transcript is short.'
+    : wordCount < 75
+      ? 'The available transcript gives a moderate basis for interpretation.'
+      : 'The transcript length supports a stronger pattern-level interpretation.';
+
+  return `${notes.join('; ')}. ${dataNote}`;
+}
+
+function confidenceFromWordCount(wordCount, responseCount) {
+  if (responseCount >= 3 && wordCount >= 75) return 'High';
+  if (responseCount >= 2 && wordCount >= 25) return 'Medium';
+  return 'Low';
+}
+
+function buildStructuredSubmissionJson(submission) {
+  const entries = orderedResponseEntries(submission);
+  const transcripts = {};
+  const cumulativeTranscripts = {};
+  const result = {};
+
+  entries.forEach(([questionId, response], index) => {
+    transcripts[questionId] = transcriptForResponse(response);
+    cumulativeTranscripts[`upto_${questionId}`] = buildCumulativeTranscript(entries, index);
+    result[questionId] = response.result || buildQuestionResult({
+      rawTranscript: response.transcripts?.raw || '',
+      normalizedTranscript: response.transcripts?.normalized || '',
+      fileName: response.audioPublicId || `${questionId}.webm`,
+    });
+  });
+
+  const [highestQuestionId] = entries.at(-1) || ['q1'];
+  const basedOn = `upto_${highestQuestionId}`;
+  const latestTranscript = cumulativeTranscripts[basedOn] || '';
+  const finalResult = buildAnalysis({ text: latestTranscript, fileName: `${basedOn}-transcript.txt` });
+  const wordCount = wordsFrom(latestTranscript).length;
+
+  return {
+    transcripts,
+    cumulative_transcripts: cumulativeTranscripts,
+    result,
+    final_report: {
+      based_on: basedOn,
+      final_report: {
+        final_result: finalResult,
+      },
+      final_summary: summarizePatterns(finalResult, wordCount),
+      confidence_level: confidenceFromWordCount(wordCount, entries.length),
+    },
+  };
+}
+
 function buildReport(submission) {
+  const structuredSubmission = buildStructuredSubmissionJson(submission);
+  const finalReport = structuredSubmission.final_report.final_report.final_result;
   const questionResults = orderedResponses(submission)
     .filter((response) => response?.result)
     .map((response) => ({
@@ -247,21 +337,24 @@ function buildReport(submission) {
       question: response.question,
       ...response.result,
     }));
-  const combinedResult = submission.combinedResult || buildCombinedResult(submission);
 
   return {
     title: 'PATIENT SPEECH ANALYSIS REPORT',
-    fileName: 'combined-transcript.txt',
-    classification: combinedResult.classification,
-    probabilitySchizophrenia: combinedResult.probabilitySchizophrenia,
-    decisionThreshold: combinedResult.decisionThreshold,
-    uncertaintyMargin: combinedResult.uncertaintyMargin,
-    biomarkers: combinedResult.biomarkers,
-    linguisticFindings: combinedResult.linguisticFindings,
-    syntacticFindings: combinedResult.syntacticFindings,
-    clinicalInterpretation: combinedResult.clinicalInterpretation,
-    overallImpression: combinedResult.overallImpression,
+    basedOn: structuredSubmission.final_report.based_on,
+    fileName: `${structuredSubmission.final_report.based_on}-transcript.txt`,
+    classification: finalReport.classification,
+    probabilitySchizophrenia: finalReport.probabilitySchizophrenia,
+    decisionThreshold: finalReport.decisionThreshold,
+    uncertaintyMargin: finalReport.uncertaintyMargin,
+    biomarkers: finalReport.biomarkers,
+    linguisticFindings: finalReport.linguisticFindings,
+    syntacticFindings: finalReport.syntacticFindings,
+    clinicalInterpretation: finalReport.clinicalInterpretation,
+    overallImpression: finalReport.overallImpression,
+    finalSummary: structuredSubmission.final_report.final_summary,
+    confidenceLevel: structuredSubmission.final_report.confidence_level,
     questionResults,
+    structuredSubmission,
     generatedAt: new Date(),
   };
 }
@@ -273,4 +366,5 @@ module.exports = {
   buildCombinedResult,
   buildQuestionResult,
   buildReport,
+  buildStructuredSubmissionJson,
 };

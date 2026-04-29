@@ -1,4 +1,6 @@
-require('dotenv').config();
+const path = require('path');
+
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 
 const express = require('express');
 const cors = require('cors');
@@ -23,7 +25,13 @@ app.get('/health', (req, res) => {
     status: 'ok',
     service: 'Schizophrenia Data Collection System API',
     cloudinaryConfigured: Boolean(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_UPLOAD_PRESET),
-    googleConfigured: Boolean(process.env.GOOGLE_CLIENT_ID),
+    googleConfigured: Boolean(
+      process.env.GOOGLE_DRIVE_ACCESS_TOKEN ||
+      process.env.GOOGLE_DRIVE_REFRESH_TOKEN ||
+      (process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY)
+    ),
+    googleOAuthConfigured: Boolean(process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET),
+    googleOAuthAuthorized: Boolean(process.env.GOOGLE_DRIVE_REFRESH_TOKEN),
   });
 });
 

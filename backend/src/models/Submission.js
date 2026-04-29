@@ -32,6 +32,7 @@ const responseSchema = new mongoose.Schema(
 const reportSchema = new mongoose.Schema(
   {
     title: String,
+    basedOn: String,
     fileName: String,
     classification: String,
     probabilitySchizophrenia: Number,
@@ -42,9 +43,12 @@ const reportSchema = new mongoose.Schema(
     syntacticFindings: [String],
     clinicalInterpretation: mongoose.Schema.Types.Mixed,
     overallImpression: String,
+    finalSummary: String,
+    confidenceLevel: String,
     questionResults: [
       mongoose.Schema.Types.Mixed,
     ],
+    structuredSubmission: mongoose.Schema.Types.Mixed,
     generatedAt: {
       type: Date,
       default: Date.now,
@@ -82,6 +86,10 @@ const submissionSchema = new mongoose.Schema(
     combinedResultUrl: String,
     reportUrl: String,
     zipFileUrl: String,
+    zipCloudinaryUrl: String,
+    zipGoogleDriveFileId: String,
+    zipGoogleDriveUrl: String,
+    zipUploadError: String,
     report: reportSchema,
     status: {
       type: String,

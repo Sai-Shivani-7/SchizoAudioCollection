@@ -1,4 +1,4 @@
-import { AlertTriangle, FileAudio, FileText } from 'lucide-react';
+import { AlertTriangle, FileArchive, FileAudio, FileText } from 'lucide-react';
 
 const BIOMARKER_ORDER = [
   'type_token_ratio',
@@ -73,6 +73,9 @@ export default function ReportCard({
   combinedTranscriptUrl,
   combinedResultUrl,
   reportUrl,
+  zipFileUrl,
+  zipGoogleDriveUrl,
+  zipUploadError,
 }) {
   if (!report) {
     return (
@@ -97,10 +100,19 @@ export default function ReportCard({
         <div><span>Participant</span><strong>{user?.name || 'Unassigned session'}</strong></div>
         <div><span>File</span><strong>{report.fileName || 'combined-transcript.txt'}</strong></div>
         <div><span>Classification</span><strong>{report.classification}</strong></div>
+        <div><span>Based on</span><strong>{report.basedOn || 'upto_q3'}</strong></div>
+        <div><span>Confidence</span><strong>{report.confidenceLevel || 'Low'}</strong></div>
         <div><span>P(Schizophrenia)</span><strong>{Number(report.probabilitySchizophrenia || 0).toFixed(4)}</strong></div>
         <div><span>Decision threshold</span><strong>{Number(report.decisionThreshold || 0).toFixed(4)}</strong></div>
         <div><span>Uncertain margin</span><strong>{Number(report.uncertaintyMargin || 0).toFixed(4)}</strong></div>
       </section>
+
+      {report.finalSummary && (
+        <section className="report-section">
+          <h2>Final Summary</h2>
+          <p className="overall-impression">{report.finalSummary}</p>
+        </section>
+      )}
 
       <section className="report-section">
         <h2>Biomarker Summary</h2>
@@ -139,7 +151,10 @@ export default function ReportCard({
           {combinedTranscriptUrl && <a className="icon-link" href={combinedTranscriptUrl} target="_blank" rel="noreferrer"><FileText size={16} />Combined transcript</a>}
           {combinedResultUrl && <a className="icon-link" href={combinedResultUrl} target="_blank" rel="noreferrer"><FileText size={16} />Combined result</a>}
           {reportUrl && <a className="icon-link" href={reportUrl} target="_blank" rel="noreferrer"><FileText size={16} />Final report</a>}
+          {zipFileUrl && <a className="icon-link" href={zipFileUrl} target="_blank" rel="noreferrer"><FileArchive size={16} />Final report ZIP</a>}
+          {zipGoogleDriveUrl && <a className="icon-link" href={zipGoogleDriveUrl} target="_blank" rel="noreferrer"><FileArchive size={16} />Google Drive ZIP</a>}
         </div>
+        {zipUploadError && <p className="inline-status">Drive ZIP upload status: {zipUploadError}</p>}
         {combinedTranscript && (
           <div className="combined-transcript">
             <span>Concatenated transcript</span>

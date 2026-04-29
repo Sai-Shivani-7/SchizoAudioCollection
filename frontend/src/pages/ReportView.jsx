@@ -45,6 +45,9 @@ export default function ReportView() {
           combinedResult={reportData?.combinedResult}
           combinedResultUrl={reportData?.combinedResultUrl}
           reportUrl={reportData?.reportUrl}
+          zipFileUrl={reportData?.zipFileUrl}
+          zipGoogleDriveUrl={reportData?.zipGoogleDriveUrl}
+          zipUploadError={reportData?.zipUploadError}
         />
       )}
     </main>
